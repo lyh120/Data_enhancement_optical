@@ -27,7 +27,57 @@ CVAE-GAN 模型由两部分组成：
 6. **PhysicsInformedLayer**包含物理信息，用于指导模型生成符合物理约束的样本。  
 
 ### 核心类————AdvancedVAEcGAN类的建立与架构 🔍
+AdvancedVAEcGAN类，整合了多种神经网络组件，形成一个条件生成模型。模型建立过程包括以下步骤：  配置管理：通过ConfigManager类定义模型超参数，如输入维度（12）、输出维度（5）、潜在空间维度（10）等。这些参数控制模型的规模和训练行为。  
+数据预处理：DataPreprocessor类负责加载数据（如lhs_dataset_5wave_500.npz）并进行标准化，确保输入和输出数据的分布适合训练。标准化使用均值和标准差，防止除零问题。  
+模型初始化：AdvancedVAEcGAN类初始化时，整合了MultiScaleFeatureExtractor、ConditionalVAE、AdvancedGenerator、SNDiscriminator和MetaAugmentationController，并设置自定义损失函数（如CustomVAELoss和CustomGANLoss）。
 
+#### SelfAttention
+
+- **功能**: 实现自注意力机制，允许模型关注输入的不同部分，提升特征提取能力。
+- **实现**: 通过查询（query）、键（key）和值（value）计算注意力分数，使用softmax归一化后与值进行矩阵乘法，输出加权后的特征。公式为:
+
+  ```math
+  \text{Attention}(Q, K, V) = \text{softmax}\left(\frac{QK^T}{\sqrt{d_k}}\right)V
+  ```
+
+  其中 $d_k$ 为键的维度，输出通过可学习参数 $y$ 与原始输入相加。
+
+#### ConditionalBlock
+
+- **功能**: 处理条件输入，结合条件信息对特征进行缩放和偏移。
+- **实现**: 包含线性层、批归一化（`BatchNormId`）和`LeakyReLU`激活，条件信息通过`cond_gamma`和`cond_beta`分别控制特征的缩放和偏移。
+
+#### PhysicsInformedLayer  
+- **功能**: 引入物理约束，提升模型对特定领域知识的适应性。  
+- **实现**: 基于条件 `c` 计算约束项，通过可学习参数 `y` 与输入相加，确保模型输出符合物理规律。  
+
+#### MultiScaleFeatureExtractor  
+- **功能**: 从输入 `x` 和输出 `y` 提取多尺度特征，提升模型对复杂关系的捕捉能力。  
+- **实现**: 使用多个分支（对应不同尺度，如 `16`、`32`、`64`）提取特征，通过自适应平均池化（`adaptive_avg_pool1d`）进行跨尺度融合，最终通过线性层整合特征。  
+
+#### ConditionalVAE  
+- **功能**: 实现条件变分自编码器，学习 `x` 给定 `y` 的条件分布。  
+- **实现**:  
+  - **编码器**: 通过 `MultiScaleFeatureExtractor` 提取特征后，结合 `y` 通过线性层和自注意力层映射到潜在空间，输出均值 $\mu$ 和对数方差 $\log \sigma^2$。  
+  - **重参数化**: 使用 $\mu + \epsilon \cdot \exp(0.5 \cdot \log \sigma^2)$ 采样潜在变量 `z`，其中 $\epsilon \sim \mathcal{N}(0,1)$。  
+  - **解码器**: 结合 `z` 和 `y` 通过线性层重建 `x`，中间加入 `PhysicsInformedLayer` 引入物理约束。  
+
+  - **损失函数**: 包括重建损失（MSE等）和KL散度，公式为:  
+    ```math
+    L_{\text{VAE}} = \text{Reconstruction Loss} + \beta \cdot \text{KL}\left(\mathcal{N}(\mu, \sigma^2) \parallel \mathcal{N}(0,1)\right)
+    ```
+    其中 $\beta = 0.7$（从配置中获取）。
+
+### AdvancedGenerator
+- **功能**: 生成条件潜在向量 `z`，试图欺骗判别器。  
+- **实现**: 从噪声和条件 `y` 开始，通过多个 `ConditionalBlock` 和自注意力层逐步生成 `z`，最终通过 `Tanh` 和线性层输出。  
+
+### SNDiscriminator
+- **功能**: 区分真实潜在向量（来自VAE）和假的潜在向量（来自生成器）。  
+- **实现**: 使用谱归一化（`spectral normalization`）稳定训练，通过线性层和自注意力层处理 `z` 和 `y` 的拼接，输出一个标量表示真实概率。  
+#### MetaAugmentationController  
+- **功能**：动态决定数据增强参数，如噪声水平、混合比例和生成因子。  
+- **实现**：通过线性层处理x和y的拼接，输出三个参数（噪声水平、混合比例、生成因子），通过sigmoid激活限制在[0,1]范围内，生成因子进一步线性变换。
 
 
 ### 组件协作机制 🔄
