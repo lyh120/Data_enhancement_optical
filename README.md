@@ -37,7 +37,7 @@ AdvancedVAEcGAN类，整合了多种神经网络组件，形成一个条件生�
 - **实现**: 通过查询（query）、键（key）和值（value）计算注意力分数，使用softmax归一化后与值进行矩阵乘法，输出加权后的特征。公式为:
 
   ```math
-  \text{Attention}(Q, K, V) = \text{softmax}\left(\frac{QK^T}{\sqrt{d_k}}\right)V
+  $\text{Attention}(Q, K, V) = \text{softmax}\left(\frac{QK^T}{\sqrt{d_k}}\right)V$
   ```
 
   其中 $d_k$ 为键的维度，输出通过可学习参数 $y$ 与原始输入相加。
@@ -63,9 +63,7 @@ AdvancedVAEcGAN类，整合了多种神经网络组件，形成一个条件生�
   - **解码器**: 结合 `z` 和 `y` 通过线性层重建 `x`，中间加入 `PhysicsInformedLayer` 引入物理约束。  
 
   - **损失函数**: 包括重建损失（MSE等）和KL散度，公式为:  
-    ```math
-    L_{\text{VAE}} = \text{Reconstruction Loss} + \beta \cdot \text{KL}\left(\mathcal{N}(\mu, \sigma^2) \parallel \mathcal{N}(0,1)\right)
-    ```
+    $L_{\text{VAE}} = \text{Reconstruction Loss} + \beta \cdot \text{KL}\left(\mathcal{N}(\mu, \sigma^2) \parallel \mathcal{N}(0,1)\right)$
     其中 $\beta = 0.7$（从配置中获取）。
 
 ### AdvancedGenerator
