@@ -35,10 +35,7 @@ AdvancedVAEcGAN类，整合了多种神经网络组件，形成一个条件生�
 
 - **功能**: 实现自注意力机制，允许模型关注输入的不同部分，提升特征提取能力。
 - **实现**: 通过查询（query）、键（key）和值（value）计算注意力分数，使用softmax归一化后与值进行矩阵乘法，输出加权后的特征。公式为:
-
-  ```math
   $\text{Attention}(Q, K, V) = \text{softmax}\left(\frac{QK^T}{\sqrt{d_k}}\right)V$
-  ```
 
   其中 $d_k$ 为键的维度，输出通过可学习参数 $y$ 与原始输入相加。
 
