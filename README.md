@@ -39,17 +39,7 @@ VAE训练：使用CustomVAELoss计算损失，包括重建损失和加权的KL�
 
 GAN训练：生成器从噪声和y生成假z，判别器区分真实z（来自VAE）和假z。  
 损失函数为CustomGANLoss，基于二分类交叉熵（BCE），损失函数为 CustomGANLoss，基于二分类交叉熵（BCE），并加入梯度惩罚（WGAN - GP 风格）确保 Lipschitz 连续性。公式为：
-<math display="block">
-  <mi mathvariant="script">L</mi><msub><mrow></mrow><mrow><mi>GP</mi></mrow></msub>
-  <mo>=</mo>
-  <mi mathvariant="double-struck">E</mi><mo>[</mo>
-  <msup><mrow><mo>(</mo>
-  <mrow><mo>|</mo><mo>|</mo><mo>∇</mo><msub><mrow></mrow><mrow><mover accent="true"><mi>z</mi><mo>^</mo></mover></mrow></msub><mi>D</mi><mo>(</mo><mover accent="true"><mi>z</mi><mo>^</mo></mover><mo>)</mo><mo>|</mo><mo>|</mo></mrow>
-  <mo>-</mo>
-  <mn>1</mn>
-  <mo>)</mo></mrow><mrow><mn>2</mn></mrow></msup>
-  <mo>]</mo>
-</math>
+$L _ { \mathrm { G P } } = E \Bigl [ ( \| \nabla _ { \hat { \mathbf { Z } } } D ( \hat { \mathbf { Z } } ) \| _ { 2 } - 1 ) ^ { 2 } \Bigr ]$
 其中 $\hat{z}$
 为真实和假样本的插值。  
 优化器分别为Adam（生成器1e-4，判别器4e-4），同样使用梯度裁剪。
