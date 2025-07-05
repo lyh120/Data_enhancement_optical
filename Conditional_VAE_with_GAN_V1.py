@@ -70,23 +70,55 @@ class CustomLoss(nn.Module):
 
 class CustomVAELoss(CustomLoss):
     def __init__(self, base_loss='mse', alpha=0.5, beta=0.1):
+        """
+        初始化 CustomVAELoss 类的实例。
+
+        参数:
+        base_loss (str, 可选): 基础损失函数的类型，默认为 'mse'。
+            支持的类型包括 'mse', 'mae', 'huber', 'bce'。
+        alpha (float, 可选): 特征重要性加权损失的权重系数，默认为 0.5。
+            用于控制特征加权损失在总损失中的占比。
+        beta (float, 可选): 周期性 KL 增强损失的权重系数，默认为 0.1。
+            在 forward 方法中，每隔一定轮数会加入 KL 增强损失，此参数调节该部分损失的权重。
+        """
+        # 调用父类 CustomLoss 的构造函数，初始化基础损失函数
         super().__init__(base_loss)
+        # 保存特征重要性加权损失的权重系数
         self.alpha = alpha
+        # 保存周期性 KL 增强损失的权重系数
         self.beta = beta
     
     def forward(self, predictions, targets, model=None, epoch=None):
+        """
+        计算自定义的 VAE 损失，包含基础重建损失、特征重要性加权损失和周期性 KL 增强损失。
+
+        参数:
+        predictions (torch.Tensor): 模型的预测值。
+        targets (torch.Tensor): 真实的目标值。
+        model (nn.Module, 可选): 模型实例，用于获取 KL 增强损失相关参数，默认为 None。
+        epoch (int, 可选): 当前训练的轮数，用于控制周期性 KL 增强损失的添加时机，默认为 None。
+
+        返回:
+        torch.Tensor: 计算得到的总损失。
+        """
         # 基础重建损失
+        # 调用父类的 forward 方法计算预测值和目标值之间的基础损失
         base_loss = super().forward(predictions, targets)
         
         # 特征重要性加权
+        # 创建一个从 1 到 1.5 的等间距张量，长度等于预测值的特征维度，作为每个特征的权重
         feature_weights = torch.linspace(1, 1.5, predictions.size(1), device=predictions.device)
+        # 计算预测值和目标值之间的平方误差，再乘以特征权重，最后求平均值得到特征重要性加权损失
         weighted_loss = (feature_weights * (predictions - targets)**2).mean()
         
         # 组合损失
+        # 将基础重建损失和特征重要性加权损失按照权重组合，得到总损失
         total_loss = base_loss + self.alpha * weighted_loss
         
-        # 周期性KL增强
+        # 周期性 KL 增强
+        # 当 epoch 不为 None 且当前轮数是 10 的倍数时，添加周期性 KL 增强损失
         if epoch and epoch % 10 == 0:
+            # 计算 VAE 编码器中计算对数方差的全连接层权重的平方均值，并乘以系数 0.3 累加到总损失中
             total_loss += 0.3 * torch.mean(model.cvae.fc_var.weight**2)
         
         return total_loss
@@ -103,79 +135,123 @@ class CustomGANLoss(CustomLoss):
 # ======================
 # 模型组件模块
 # ======================
-class SelfAttention(nn.Module):
+class SelfAttention(nn.Module): # 自注意力机制，通过捕获特征间的依赖关系，提升特征的表达能力，用于增强模块的特征提取能力。。
     def __init__(self, in_dim):
+        """
+        初始化自注意力机制模块。
+
+        参数:
+        in_dim (int): 输入特征的维度。
+        """
+        # 调用父类的构造函数
         super().__init__()
+        # 定义查询（Query）线性层，将输入特征映射到更低维度空间，维度为输入维度的 1/8
         self.query = nn.Linear(in_dim, in_dim // 8)
+        # 定义键（Key）线性层，将输入特征映射到更低维度空间，维度为输入维度的 1/8
         self.key = nn.Linear(in_dim, in_dim // 8)
+        # 定义值（Value）线性层，将输入特征进行线性变换，输出维度保持与输入维度一致
         self.value = nn.Linear(in_dim, in_dim)
+        # 定义可学习的参数 gamma，初始值为 0，用于控制注意力输出的权重
         self.gamma = nn.Parameter(torch.zeros(1))
     
     def forward(self, x):
+        """
+        自注意力机制的前向传播方法。
+
+        参数:
+        x (torch.Tensor): 输入张量，形状为 (batch_size, dim)
+
+        返回:
+        torch.Tensor: 经过自注意力机制处理后的输出张量，形状与输入相同 (batch_size, dim)
+        """
+        # 获取输入张量的批次大小和特征维度
         batch_size, dim = x.size()
+        # 通过查询（Query）线性层处理输入，并调整形状为 (batch_size, -1, query_out_features)
         Q = self.query(x).view(batch_size, -1, self.query.out_features)
+        # 通过键（Key）线性层处理输入，并调整形状为 (batch_size, -1, key_out_features)
         K = self.key(x).view(batch_size, -1, self.key.out_features)
+        # 通过值（Value）线性层处理输入，并调整形状为 (batch_size, -1, dim)
         V = self.value(x).view(batch_size, -1, dim)
         
-        # 计算注意力分数
+        # 计算注意力分数，通过批次矩阵乘法（bmm）计算 Q 和 K 的转置的乘积，并进行缩放
         attn_scores = torch.bmm(Q, K.transpose(1, 2)) / (self.query.out_features ** 0.5)
+        # 对注意力分数应用 softmax 函数，得到注意力权重
         attn = torch.softmax(attn_scores, dim=-1)
         
-        # 计算注意力输出
+        # 通过批次矩阵乘法计算注意力输出，并调整形状为 (batch_size, dim)
         out = torch.bmm(attn, V).view(batch_size, dim)
+        # 将注意力输出乘以可学习参数 gamma 后与原始输入相加，实现残差连接
         return self.gamma * out + x
 
-class ConditionalBlock(nn.Module):
+class ConditionalBlock(nn.Module):   # 条件归一化块（Conditional Normalization Block），常用于条件生成对抗网络（cGAN）或变分自编码器（VAE）中。这种结构可以有效地将类别标签等条件信息 c 融合到特征生成过程中，增强模型的条件控制能力。
     def __init__(self, in_dim, out_dim, cond_dim):
-        super().__init__()
-        self.fc = nn.Linear(in_dim, out_dim)
-        self.bn = nn.BatchNorm1d(out_dim)
-        self.cond_gamma = nn.Linear(cond_dim, out_dim)
-        self.cond_beta = nn.Linear(cond_dim, out_dim)
-        self.act = nn.LeakyReLU(0.2)
-    
+        super().__init__()  # 调用父类nn.Module的初始化方法
+        self.fc = nn.Linear(in_dim, out_dim)  # 全连接层，将输入维度in_dim映射到输出维度out_dim
+        self.bn = nn.BatchNorm1d(out_dim)  # 一维批归一化层，用于稳定训练过程
+        self.cond_gamma = nn.Linear(cond_dim, out_dim)  # 生成缩放因子γ的条件投影层
+        self.cond_beta = nn.Linear(cond_dim, out_dim)  # 生成偏移因子β的条件投影层
+        self.act = nn.LeakyReLU(0.2)  # 带泄露的ReLU激活函数（负斜率0.2）
+    """
+    条件归一化：通过cond_gamma和cond_beta将条件信息(cond_dim)投射到特征空间(out_dim)，实现条件依赖的特征变换
+    批归一化：bn层标准化中间特征，加速训练并缓解梯度消失
+    激活函数：LeakyReLU引入非线性，保留负值信息（相比标准ReLU）
+    """
     def forward(self, x, c):
-        h = self.fc(x)
-        h = self.bn(h)
-        gamma = self.cond_gamma(c)
-        beta = self.cond_beta(c)
-        return self.act(h * (1 + gamma) + beta)
-
-class PhysicsInformedLayer(nn.Module):
+        h = self.fc(x)  # 通过全连接层进行特征变换
+        h = self.bn(h)  # 对特征进行批归一化处理
+        gamma = self.cond_gamma(c)  # 从条件信息生成缩放因子γ
+        beta = self.cond_beta(c)    # 从条件信息生成偏移因子β
+        return self.act(h * (1 + gamma) + beta)  # 应用条件缩放偏移后激活
+    """
+    可以精确控制条件参数对生成结果的影响
+    批归一化缓解了光学参数尺度差异带来的训练不稳定问题。批归一化层 (BatchNorm1d) 加速收敛。
+    通过 cond_gamma 和 cond_beta 将条件信息（如光学参数）融合到特征中。残差式条件融合（h * (1 + gamma) + beta）保留了原始特征的重要信息。
+    """
+class PhysicsInformedLayer(nn.Module): # 物理约束层，用于确保生成的光学参数满足物理约束，如能量守恒、波长限制等。
     def __init__(self, dim, cond_dim):
-        super().__init__()
-        self.constraint_fc = nn.Linear(cond_dim, dim)
-        self.gamma = nn.Parameter(torch.ones(1) * 0.1)
-    
+        super().__init__()  # 调用父类nn.Module的初始化
+        self.constraint_fc = nn.Linear(cond_dim, dim)  # 将条件信息映射到特征空间的线性层
+        self.gamma = nn.Parameter(torch.ones(1) * 0.1)  # 可学习的约束强度系数（初始化为0.1）gamma 初始化为0.1避免初期训练干扰
+    """
+    在光学参数生成任务中，该层可以确保生成的光学参数满足基本的物理规律（如能量守恒、波长限制等），同时保持生成数据的多样性。
+    """
     def forward(self, x, c):
-        constraint = self.constraint_fc(c)
-        return x + self.gamma * constraint
+        constraint = self.constraint_fc(c)  # 将条件信息（如波长/能量）映射为物理约束
+        return x + self.gamma * constraint  # 保留原始特征的同时添加约束
 
-class MultiScaleFeatureExtractor(nn.Module):
+class MultiScaleFeatureExtractor(nn.Module):  # 多尺度特征提取器模块，用于从输入和输出数据中提取多尺度特征并进行融合
+    """
+    作为Conditional VAE的输入处理器，增强模型对光学参数多尺度特征的捕捉能力
+    通过不同尺度的特征融合，提升生成数据的物理合理性
+    通过多尺度特征金字塔结构显著提升了模型对复杂光学关系的建模能力。
+    核心功能：1、多尺度特征提取；2、跨尺度特征融合；3、动态融合参数。
+    """
     def __init__(self, input_dim, output_dim, feature_scales):
         super().__init__()
-        self.input_branches = nn.ModuleList()
-        self.output_branches = nn.ModuleList()
+        # 输入和输出特征的多尺度提取分支
+        self.input_branches = nn.ModuleList()  # 输入特征的多尺度提取网络
+        self.output_branches = nn.ModuleList() # 输出特征的多尺度提取网络
         
         # 输入特征提取分支
         for dim in feature_scales:
             seq = nn.Sequential(
-                nn.Linear(input_dim, dim),
-                nn.LeakyReLU(0.2),
-                nn.BatchNorm1d(dim),
-                nn.Linear(dim, dim)
+                nn.Linear(input_dim, dim),      # 线性变换到目标维度
+                nn.LeakyReLU(0.2),              # 带泄露ReLU激活(负斜率0.2)，增强梯度流动
+                nn.BatchNorm1d(dim),            # 批归一化层，稳定训练过程
+                nn.Linear(dim, dim)              # 保持维度不变的线性变换
             )
-            self.input_branches.append(seq)
+            self.input_branches.append(seq)      # 添加到输入分支列表
         
         # 输出特征提取分支
         for dim in feature_scales:
             seq = nn.Sequential(
-                nn.Linear(output_dim, dim//2),
-                nn.ReLU(),
-                nn.Linear(dim//2, dim)
+                nn.Linear(output_dim, dim//2),  # 先压缩到一半维度
+                nn.ReLU(),                      # 标准ReLU激活
+                nn.Linear(dim//2, dim)          # 再扩展到目标维度
             )
-            self.output_branches.append(seq)
+            self.output_branches.append(seq)     # 添加到输出分支列表
         
+        # 融合层延迟初始化(根据第一次前向传播的实际维度动态创建)
         self.fusion = None
     
     def forward(self, x, y):
@@ -369,8 +445,8 @@ class AdvancedVAEcGAN(nn.Module):
         self.opt_generator = Adam(self.generator.parameters(), lr=config['lr']['generator'])
         self.opt_discriminator = Adam(self.discriminator.parameters(), lr=config['lr']['discriminator'])
         self.opt_controller = RMSprop(self.controller.parameters(), lr=config['lr']['controller'])
-        
-        # 应用权重初始化
+
+
         self.apply(self._init_weights)
     
     def _init_weights(self, m):
