@@ -284,57 +284,104 @@ class MultiScaleFeatureExtractor(nn.Module):  # 多尺度特征提取器模块�
         
         return self.fusion(concat_features)
 
-class ConditionalVAE(nn.Module):
+class ConditionalVAE(nn.Module): # 件变分自编码器(CVAE)的核心架构
     def __init__(self, input_dim, output_dim, latent_dim, feature_extractor):
+        """初始化条件变分自编码器(CVAE)
+        
+        参数:
+            input_dim: 输入数据的特征维度
+            output_dim: 条件信息的维度(如光学参数)
+            latent_dim: 隐空间的维度
+            feature_extractor: 多尺度特征提取器实例
+        """
         super().__init__()
-        self.feature_extractor = feature_extractor
+        self.feature_extractor = feature_extractor  # 多尺度特征提取模块
         
-        # 编码器
+        # 编码器部分
         self.encoder = nn.Sequential(
-            nn.Linear(64 + output_dim, 48),
-            nn.LeakyReLU(0.2),
-            SelfAttention(48),
-            nn.Linear(48, 32),
-            nn.LeakyReLU(0.2)
+            nn.Linear(64 + output_dim, 48),  # 输入层: 64维特征+条件信息
+            nn.LeakyReLU(0.2),              # 带泄露ReLU激活函数
+            SelfAttention(48),              # 自注意力机制层
+            nn.Linear(48, 32),              # 特征压缩层
+            nn.LeakyReLU(0.2)               # 非线性激活
         )
-        self.fc_mu = nn.Linear(32, latent_dim)
-        self.fc_var = nn.Linear(32, latent_dim)
+        self.fc_mu = nn.Linear(32, latent_dim)   # 均值输出层
+        self.fc_var = nn.Linear(32, latent_dim)  # 对数方差输出层
         
-        # 解码器
+        # 解码器部分
         self.decoder_pre = nn.Sequential(
-            nn.Linear(latent_dim + output_dim, 32),
-            nn.ReLU(),
-            nn.Linear(32, 48),
-            nn.ReLU()
+            nn.Linear(latent_dim + output_dim, 32),  # 输入层: 隐变量+条件信息
+            nn.ReLU(),                                # ReLU激活
+            nn.Linear(32, 48),                        # 特征扩展层
+            nn.ReLU()                                 # 非线性激活
         )
-        self.physics_layer = PhysicsInformedLayer(48, output_dim)
-        self.decoder_post = nn.Linear(48, input_dim)
+        self.physics_layer = PhysicsInformedLayer(48, output_dim)  # 物理约束层
+        self.decoder_post = nn.Linear(48, input_dim)  # 最终输出层
     
     def encode(self, x, y):
-        features = self.feature_extractor(x, y)
-        conditioned = torch.cat([features, y], dim=1)
-        conditioned = torch.clamp(conditioned, -10, 10)
-        h = self.encoder(conditioned)
-        h = torch.clamp(h, -10, 10)
-        return self.fc_mu(h), self.fc_var(h)
+        """编码器前向传播方法
+        
+        参数:
+            x: 输入数据张量，形状为(batch_size, input_dim)
+            y: 条件信息张量，形状为(batch_size, output_dim)
+            
+        返回:
+            mu: 隐空间均值，形状为(batch_size, latent_dim)
+            logvar: 隐空间对数方差，形状为(batch_size, latent_dim)
+        """
+        features = self.feature_extractor(x, y)  # 提取多尺度特征
+        conditioned = torch.cat([features, y], dim=1)  # 拼接特征和条件信息
+        conditioned = torch.clamp(conditioned, -10, 10)  # 数值稳定性处理
+        h = self.encoder(conditioned)  # 通过编码器网络
+        h = torch.clamp(h, -10, 10)  # 再次数值稳定性处理
+        return self.fc_mu(h), self.fc_var(h)  # 返回均值和方差
 
     def reparameterize(self, mu, logvar):
-        # 严格限制logvar范围
-        logvar = torch.clamp(logvar, min=-5, max=2)
-        std = torch.exp(0.5 * logvar)
-        eps = torch.randn_like(std)
-        return mu + eps * std
+        """重参数化技巧，用于从隐空间采样
+        
+        参数:
+            mu: 隐空间均值，形状为(batch_size, latent_dim)
+            logvar: 隐空间对数方差，形状为(batch_size, latent_dim)
+            
+        返回:
+            z: 采样得到的隐变量，形状与mu相同
+        """
+        logvar = torch.clamp(logvar, min=-5, max=2)  # 限制对数方差范围，确保数值稳定性
+        std = torch.exp(0.5 * logvar)  # 计算标准差
+        eps = torch.randn_like(std)  # 从标准正态分布采样噪声
+        return mu + eps * std  # 重参数化公式
     
     def decode(self, z, y):
-        conditioned = torch.cat([z, y], dim=1)
-        h = self.decoder_pre(conditioned)
-        h = self.physics_layer(h, y)
-        return self.decoder_post(h)
-    
+        """解码器前向传播方法
+        
+        参数:
+            z: 隐变量，形状为(batch_size, latent_dim)
+            y: 条件信息，形状为(batch_size, output_dim)
+            
+        返回:
+            torch.Tensor: 重建的输入数据，形状为(batch_size, input_dim)
+        """
+        conditioned = torch.cat([z, y], dim=1)  # 拼接隐变量和条件信息
+        h = self.decoder_pre(conditioned)  # 通过解码器前段网络
+        h = self.physics_layer(h, y)  # 应用物理约束层
+        return self.decoder_post(h)  # 通过最终输出层得到重建结果
+
     def forward(self, x, y):
-        mu, logvar = self.encode(x, y)
-        z = self.reparameterize(mu, logvar)
-        return self.decode(z, y), mu, logvar
+        """条件变分自编码器的完整前向传播流程
+        
+        参数:
+            x: 输入数据张量，形状为(batch_size, input_dim)
+            y: 条件信息张量，形状为(batch_size, output_dim)
+            
+        返回:
+            tuple: 包含三个元素的元组
+                - 重建数据: 解码器输出，形状为(batch_size, input_dim)
+                - mu: 隐空间均值，形状为(batch_size, latent_dim)  
+                - logvar: 隐空间对数方差，形状为(batch_size, latent_dim)
+        """
+        mu, logvar = self.encode(x, y)  # 编码器部分，获取隐空间分布参数
+        z = self.reparameterize(mu, logvar)  # 重参数化采样隐变量
+        return self.decode(z, y), mu, logvar  # 解码器重建并返回结果和分布参数
 
 class AdvancedGenerator(nn.Module):
     def __init__(self, noise_dim, cond_dim, latent_dim):
