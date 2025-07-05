@@ -112,7 +112,7 @@ CVAE-GAN 模型的训练分为两阶段：
 DataPreprocessor加载数据（如Latin Hypercube Sampling数据集），标准化输入和输出，使用均值和标准差，避免除零问题。  
 增强后数据通过inverse_transform恢复原始尺度，保存为.pth文件，包括标准化和原始尺度的数据。
 
-## 模型整体流程图
+## 模型整体流程图 💻 ————协同增强机制
 ```mermaid
 graph LR
     A[输入数据] --> B[多尺度特征提取]
@@ -134,6 +134,81 @@ graph LR
     O --> C
     G --> P[训练数据池]
     P --> A;
+```
+### 阶段1: 前向传播与特征提取
+```mermaid
+sequenceDiagram
+    participant D as 原始数据
+    participant F as 多尺度特征提取器
+    participant C as CVAE编码器
+    participant G as 生成器
+    participant V as CVAE解码器
+    participant Di as 判别器
+    participant M as 元控制器
+    
+    D->>F: 输入数据(X_real)
+    D->>F: 条件数据(Y_real)
+    F->>C: 多尺度融合特征
+    C->>C: 计算μ和logvar
+    C->>C: 重参数化→隐变量Z_real
+    
+    par 生成路径
+        M->>M: 计算增强参数
+        M->>G: 噪声水平/混合比例
+        G->>G: 生成隐变量Z_fake
+    end
+    
+    C->>V: Z_real + Y_real
+    G->>V: Z_fake + Y_real(混合)
+    V->>V: 物理约束层
+    V->>V: 生成重建数据X_recon
+    
+    C->>Di: Z_real + Y_real
+    G->>Di: Z_fake + Y_real(混合)
+    Di->>Di: 判别真伪
+```
+### 阶段2: 反向传播与协同优化
+```mermaid
+flowchart TD
+    subgraph 损失计算
+        A[重建损失] --> B[VAE优化]
+        C[KL散度] --> B
+        D[判别器真损失] --> E[判别器优化]
+        F[判别器假损失] --> E
+        G[梯度惩罚] --> E
+        H[生成器对抗损失] --> I[生成器优化]
+        J[增强重建损失] --> K[控制器优化]
+    end
+    
+    subgraph 梯度流动
+        B --> Enc[编码器参数]
+        B --> Dec[解码器参数]
+        E --> Dis[判别器参数]
+        I --> Gen[生成器参数]
+        K --> Con[控制器参数]
+    end
+    
+    subgraph 隐空间协同
+        Enc --> Z[隐空间结构]
+        Dec --> Z
+        Gen --> Z
+        Dis --> Z
+    end
+```
+### 阶段3: 自适应数据增强流程
+```mermaid
+graph LR
+    A[输入小样本] --> B[控制器分析数据特性]
+    B --> C[计算增强参数]
+    C --> D[生成噪声]
+    D --> E[混合条件数据]
+    E --> F[生成器产生隐变量]
+    F --> G[CVAE解码生成新样本]
+    G --> H[新样本重建误差]
+    H --> I[反馈优化控制器]
+    I --> C
+    G --> J[合并原始样本和生成样本]
+    J --> K[形成增强数据集]
 ```
 
 
