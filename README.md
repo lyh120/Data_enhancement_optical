@@ -63,11 +63,11 @@ AdvancedVAEcGAN类，整合了多种神经网络组件，形成一个条件生�
     $L_{\text{VAE}} = \text{Reconstruction Loss} + \beta \cdot \text{KL}\left(\mathcal{N}(\mu, \sigma^2) \parallel \mathcal{N}(0,1)\right)$
     其中 $\beta = 0.7$（从配置中获取）。
 
-### AdvancedGenerator
+#### AdvancedGenerator
 - **功能**: 生成条件潜在向量 `z`，试图欺骗判别器。  
 - **实现**: 从噪声和条件 `y` 开始，通过多个 `ConditionalBlock` 和自注意力层逐步生成 `z`，最终通过 `Tanh` 和线性层输出。  
 
-### SNDiscriminator
+#### SNDiscriminator
 - **功能**: 区分真实潜在向量（来自VAE）和假的潜在向量（来自生成器）。  
 - **实现**: 使用谱归一化（`spectral normalization`）稳定训练，通过线性层和自注意力层处理 `z` 和 `y` 的拼接，输出一个标量表示真实概率。  
 #### MetaAugmentationController  
